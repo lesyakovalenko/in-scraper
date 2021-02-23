@@ -15,7 +15,7 @@ export class ScraperService {
   }
 
   async start() {
-    const browser = await puppeteer.launch({ headless: false });
+    const browser = await puppeteer.launch({ headless: true });
     this.page = await browser.newPage();
     this.url = this.config.get('url');
     await this.loginUser();
