@@ -15,7 +15,7 @@ export class ScraperService {
   }
 
   async start() {
-    const browser = await puppeteer.launch({ headless: true });
+    const browser = await puppeteer.launch({ headless: false });
     this.page = await browser.newPage();
     this.url = this.config.get('url');
     await this.loginUser();
@@ -37,40 +37,46 @@ export class ScraperService {
   }
 
   async findUsers(userName) {
-    const reslist = [];
-    let amountFindUser = 0;
-    let count = 0;
+    const listUser = [];
     try {
       await this.page.keyboard.press('Enter');
-      do {
-        await this.page.click('div[class*="application-outlet"] button[id]');
-        await this.page.waitForSelector('input[aria-label="Search"]');
-        await this.page.focus('input[aria-label="Search"]');
-        await this.page.keyboard.type('');
-        await this.page.keyboard.type(userName);
-        await new Promise((r) => setTimeout(r, 2000));
-        const sel =
-          'div[id="global-nav-search"] div[role="listbox"]>div[id^="ember"]>div[id^="ember"]';
-        const index = reslist.length;
+      const sel =
+        'div[id="global-nav-search"] div[role="listbox"]>div[id^="ember"]>div[id^="ember"]';
+      await this.inputFind(userName);
+      await this.page.waitForSelector(sel);
+      const listIndexEl = await this.page.$$eval(sel, (list) => {
+        const listIndexEl = [];
+        list.forEach((el, index) => {
+          if (el.querySelector('img')) {
+            listIndexEl.push(index);
+          }
+        });
+        return listIndexEl;
+      });
+
+      if (!listIndexEl.length) {
+        return new HttpException(
+          { status: HttpStatus.NOT_FOUND, error: 'Not found' },
+          HttpStatus.NOT_FOUND,
+        );
+      }
+      await this.clearInputFind(userName.length);
+      for (let i = 0; i < listIndexEl.length; i++) {
+        await this.inputFind(userName);
+        await this.page.waitForSelector(sel);
         const listEl = await this.page.$$(sel);
-        amountFindUser = listEl.length - 1;
-        if (!amountFindUser) {
-          return new HttpException(
-            { status: HttpStatus.NOT_FOUND, error: 'Not found' },
-            HttpStatus.NOT_FOUND,
-          );
-        }
-
-        await listEl[index].click();
-        await new Promise((r) => setTimeout(r, 2000));
+        const index = listIndexEl[i];
+        await Promise.all([
+          await listEl[index].click(),
+          await this.page.waitForNavigation({ waitUntil: 'networkidle2' }),
+        ]);
         const userInfo = await this.getInfoUser();
-
         if (userInfo) {
-          reslist.push(userInfo);
+          listUser.push(userInfo);
         }
-        ++count;
-      } while (reslist.length < 5 && count < amountFindUser);
-      return reslist;
+        if (listUser.length === 5) break;
+      }
+      return listUser;
     } catch (e) {
       throw new HttpException(
         { status: HttpStatus.NOT_FOUND, error: 'Not Found' },
@@ -79,32 +85,57 @@ export class ScraperService {
     }
   }
 
+  async inputFind(query: string) {
+    await this.page.click('div[class*="application-outlet"] button[id]');
+    await this.page.waitForSelector('input[aria-label="Search"]');
+    await this.page.focus('input[aria-label="Search"]');
+    await this.page.keyboard.type(query);
+  }
+
+  async clearInputFind(count) {
+    const input = await this.page.$('input[aria-label="Search"]');
+    await input.click({ clickCount: count });
+    await input.press('Backspace');
+    await Promise.all([
+      await this.page.keyboard.press('Enter'),
+      await this.page.waitForNavigation({ waitUntil: 'networkidle2' }),
+    ]);
+  }
+
   async getInfoUser() {
     const url = await this.page.url();
-    const elementCompany = this.page.$('div[class*="organization-outlet"]');
-    const elementPerson = this.page.$('main[id="main"]');
-    if (elementCompany || elementPerson) {
+    const elementCompany = await this.page.$(
+      'div[class*="organization-outlet"]',
+    );
+    const elementPerson = await this.page.$('main[id*="main"]');
+    const elementGroup = await this.page.$('div[id*="groups"]');
+    if (elementCompany || elementPerson || elementGroup) {
       const info = await this.page.evaluate(() => {
         const img =
+          document.querySelector(
+            'div[class*="organization-outlet"] div[id^="ember"] div[class="relative"] img[id^="ember"]',
+          ) ||
           document.querySelector(
             'main[id="main"] div[id^="ember"]>img[title]',
           ) ||
           document.querySelector(
-            'div[class*="organization-outlet"] div[id^="ember"] div[class="relative"] img[id^="ember"]',
+            'main[id="main"] div[id^="ember"]>button>img[id]',
           );
+        document.querySelector('div[id*="groups"] img[title]');
         const avatarUrl = !!img ? img.getAttribute('src') : '';
         const nameEl =
           document.querySelector(
-            'main[id="main"] section[id^="ember"] ul:first-child li:not([id])',
+            'div[class*="organization-outlet"] div[id^="ember"] div[class="relative"] h1',
           ) ||
           document.querySelector(
-            'div[class*="organization-outlet"] div[id^="ember"] div[class="relative"] h1',
-          );
+            'main[id="main"] section[id^="ember"] ul:first-child li:not([id])',
+          ) ||
+          document.querySelector('div[id*="groups"] h1');
         let name = !!nameEl ? nameEl.textContent.replace('\n', '') : '';
         name = name.trim();
         return { avatarUrl: avatarUrl, name: name };
       });
-      return info.name && info.avatarUrl ? { profileUrl: url, ...info } : null;
+      return info.name || info.avatarUrl ? { profileUrl: url, ...info } : null;
     }
     return;
   }
