@@ -120,8 +120,8 @@ export class ScraperService {
           ) ||
           document.querySelector(
             'main[id="main"] div[id^="ember"]>button>img[id]',
-          );
-        document.querySelector('div[id*="groups"] img[title]');
+          ) ||
+          document.querySelector('div[id*="groups"] img[title]');
         const avatarUrl = !!img ? img.getAttribute('src') : '';
         const nameEl =
           document.querySelector(
